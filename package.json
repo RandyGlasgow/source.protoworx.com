@@ -16,5 +16,8 @@
   },
   "dependencies": {
     "up-fetch": "^2.5.0"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.3"
   }
 }
