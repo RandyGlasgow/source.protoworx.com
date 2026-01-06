@@ -7,7 +7,7 @@
     "web"
   ],
   "scripts": {
-    "dev": "bun run --filter './app' start:dev & bun run --filter './web' dev",
+    "dev": "bun run --filter './app' start:dev & bun run --filter './web' dev & bun run --filter './web' dev:storybook",
     "build": "bun run --filter './app' build && bun run --filter './web' build",
     "test": "bun run --filter './app' test && bun run --filter './web' test",
     "lint": "bun run --filter './app' lint && bun run --filter './web' lint",
