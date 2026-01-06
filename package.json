@@ -1,0 +1,20 @@
+{
+  "name": "source-protoworx",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "app",
+    "web"
+  ],
+  "scripts": {
+    "dev": "bun run --filter './app' start:dev & bun run --filter './web' dev",
+    "build": "bun run --filter './app' build && bun run --filter './web' build",
+    "test": "bun run --filter './app' test && bun run --filter './web' test",
+    "lint": "bun run --filter './app' lint && bun run --filter './web' lint",
+    "build:app": "bun run --filter './app' build",
+    "build:web": "bun run --filter './web' build"
+  },
+  "dependencies": {
+    "up-fetch": "^2.5.0"
+  }
+}

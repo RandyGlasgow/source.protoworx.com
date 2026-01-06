@@ -1,0 +1,13 @@
+.cursor
+
+# Environment variables
+.env*
+.env.*
+node_modules/
+
+# IDEs
+.cursor
+
+# Build
+dist/
+build/
