@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from 'generated/prisma/client';
+import { attempt } from 'src/lib/tryCatch';
 
 @Injectable()
 export class PrismaService extends PrismaClient {
@@ -12,10 +13,26 @@ export class PrismaService extends PrismaClient {
   }
 
   async onModuleInit() {
-    await this.$connect();
+    const [error] = await attempt(async () => {
+      return await this.$connect();
+    });
+    if (error) {
+      Logger.error(error, 'PrismaService');
+      throw error;
+    } else {
+      Logger.log('PrismaService connected to database\n\n');
+    }
   }
 
   async onModuleDestroy() {
-    await this.$disconnect();
+    const [error] = await attempt(async () => {
+      return await this.$disconnect();
+    });
+    if (error) {
+      Logger.error(error, 'PrismaService');
+      throw error;
+    } else {
+      Logger.log('PrismaService disconnected from database\n\n');
+    }
   }
 }
