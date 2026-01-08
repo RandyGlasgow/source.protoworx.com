@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from 'generated/prisma/client';
-import { attempt } from 'src/lib/tryCatch';
+import { attempt } from 'src/lib/try-catch';
 
 @Injectable()
 export class PrismaService extends PrismaClient {
