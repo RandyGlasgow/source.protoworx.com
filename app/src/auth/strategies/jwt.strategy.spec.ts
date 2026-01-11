@@ -1,10 +1,10 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException } from '@nestjs/common';
-import { JwtStrategy } from './jwt.strategy';
+import { ConfigService } from '@nestjs/config';
+import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { createTestUserWithAuth } from 'src/test-helpers/auth-test-helpers';
+import { JwtPayload } from '../interfaces/jwt-payload.interface';
+import { JwtStrategy } from './jwt.strategy';
 
 describe('JwtStrategy', () => {
   let strategy: JwtStrategy;
@@ -61,14 +61,14 @@ describe('JwtStrategy', () => {
       email: user.email,
     };
 
-      (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
+    (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
       ...user,
       auth,
     });
 
     const result = await strategy.validate(payload);
 
-      expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
+    expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
       where: { id: payload.userId },
       include: { auth: true },
     });
@@ -99,7 +99,7 @@ describe('JwtStrategy', () => {
       email: user.email,
     };
 
-      (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
+    (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
       ...user,
       auth: null,
     });
@@ -117,14 +117,14 @@ describe('JwtStrategy', () => {
       email: user.email,
     };
 
-      (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
+    (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
       ...user,
       auth,
     });
 
     await strategy.validate(payload);
 
-      expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
+    expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
       where: { id: payload.userId },
       include: { auth: true },
     });

@@ -6,6 +6,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { BotIcon, SearchIcon, Share2Icon, WrenchIcon } from 'lucide-react';
+import Link from 'next/link';
 
 export default function Page() {
   return (
@@ -21,10 +22,14 @@ export default function Page() {
           community-driven resources.
         </p>
         <div className="flex gap-4">
-          <Button size="lg">Get Started</Button>
-          <Button variant="outline" size="lg">
-            Explore
-          </Button>
+          <Link href="/sign-up">
+            <Button size="lg">Get Started</Button>
+          </Link>
+          <Link href="/explore">
+            <Button variant="outline" size="lg">
+              Explore
+            </Button>
+          </Link>
         </div>
       </section>
 
@@ -112,7 +117,9 @@ export default function Page() {
             Join the community and start discovering amazing LLM resources
             today.
           </p>
-          <Button size="lg">Sign Up Now</Button>
+          <Link href="/sign-up">
+            <Button size="lg">Sign Up Now</Button>
+          </Link>
         </div>
       </section>
     </main>

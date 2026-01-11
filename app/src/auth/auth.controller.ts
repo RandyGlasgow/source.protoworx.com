@@ -1,20 +1,28 @@
 import {
-  Controller,
-  Post,
-  Get,
   Body,
+  Controller,
+  Get,
   Headers,
+  Post,
+  Res,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Response } from 'express';
+import { Prisma } from 'generated/prisma/client';
 import { AuthService } from './auth.service';
-import { SignUpDto } from './dto/sign-up.dto';
-import { SignInDto } from './dto/sign-in.dto';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
+import { OnboardingDto } from './dto/onboarding.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { SignInDto } from './dto/sign-in.dto';
+import { SignUpDto } from './dto/sign-up.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TransformResponseInterceptor } from './interceptors/transform-response.interceptor';
+import { setAuthToken } from './utils/set-auth-token.util';
 
 @Controller('auth')
 @UseInterceptors(TransformResponseInterceptor)
@@ -28,9 +36,16 @@ export class AuthController {
   }
 
   @Post('sign-in')
-  @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
-  async signIn(@Body() dto: SignInDto) {
-    return this.authService.signIn(dto);
+  @Throttle({ default: { limit: 50, ttl: 60000 } }) // 50 requests per minute
+  async signIn(
+    @Body() dto: SignInDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.signIn(dto);
+
+    setAuthToken(res, result.token);
+
+    return result;
   }
 
   @Get('verify')
@@ -40,8 +55,15 @@ export class AuthController {
   }
 
   @Post('verify-email')
-  async verifyEmail(@Body() dto: VerifyEmailDto) {
-    return this.authService.verifyEmail(dto);
+  async verifyEmail(
+    @Body() dto: VerifyEmailDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.verifyEmail(dto);
+
+    setAuthToken(res, result.token);
+
+    return result;
   }
 
   @Post('resend-verification')
@@ -59,5 +81,26 @@ export class AuthController {
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
+  }
+
+  @Post('onboarding')
+  @UseGuards(JwtAuthGuard)
+  async onboarding(@CurrentUser() user: any, @Body() dto: OnboardingDto) {
+    return await this.authService.onboarding(user.id as string, dto);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  me(@CurrentUser() user: Prisma.UserGetPayload<{ include: { auth: true } }>) {
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      username: user.username,
+      hasOnboarded: user.hasOnboarded,
+      emailVerified: user.auth?.emailVerified ?? false,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
   }
 }
