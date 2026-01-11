@@ -1,10 +1,10 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
-  UnauthorizedException,
-  ConflictException,
   NotFoundException,
-  BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -13,25 +13,25 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ResendService } from 'src/resend/resend.service';
 import { z } from 'zod';
-import {
-  signUpSchema,
-  signInSchema,
-  verifyTokenSchema,
-  verifyEmailSchema,
-  requestPasswordResetSchema,
-  resetPasswordSchema,
-  resendVerificationSchema,
-  validateUserSchema,
-  type SignUpInput,
-  type SignInInput,
-  type VerifyTokenInput,
-  type VerifyEmailInput,
-  type RequestPasswordResetInput,
-  type ResetPasswordInput,
-  type ResendVerificationInput,
-  type ValidateUserInput,
-} from './validators/auth.validator';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
+import {
+  requestPasswordResetSchema,
+  resendVerificationSchema,
+  resetPasswordSchema,
+  signInSchema,
+  signUpSchema,
+  validateUserSchema,
+  verifyEmailSchema,
+  verifyTokenSchema,
+  type RequestPasswordResetInput,
+  type ResendVerificationInput,
+  type ResetPasswordInput,
+  type SignInInput,
+  type SignUpInput,
+  type ValidateUserInput,
+  type VerifyEmailInput,
+  type VerifyTokenInput,
+} from './validators/auth.validator';
 
 @Injectable()
 export class AuthService {
@@ -48,7 +48,6 @@ export class AuthService {
     try {
       const validated = signUpSchema.parse(params);
 
-      // Check if user already exists
       const existingUser = await this.prisma.user.findUnique({
         where: { email: validated.email },
       });
@@ -57,17 +56,14 @@ export class AuthService {
         throw new ConflictException('Email already exists');
       }
 
-      // Hash password
       const passwordHash = await this.hashPassword(validated.password);
 
-      // Generate verification token
       const verificationToken = this.generateEmailVerificationToken();
       const verificationTokenExpires = new Date();
       verificationTokenExpires.setHours(
         verificationTokenExpires.getHours() + 48,
       );
 
-      // Create user and auth record
       const user = await this.prisma.user.create({
         data: {
           email: validated.email,
@@ -75,12 +71,23 @@ export class AuthService {
           auth: {
             create: {
               passwordHash,
-              emailVerificationToken: verificationToken,
-              emailVerificationTokenExpires: verificationTokenExpires,
+            },
+          },
+          profile: {
+            create: {
+              emailVerified: false,
+              onboardingComplete: false,
+            },
+          },
+          tokens: {
+            create: {
+              type: 'VERIFY_EMAIL',
+              token: verificationToken,
+              expiresAt: verificationTokenExpires,
             },
           },
         },
-        include: { auth: true },
+        include: { auth: true, profile: true },
       });
 
       // Send verification email
@@ -89,7 +96,24 @@ export class AuthService {
         verificationToken,
       );
 
-      return { message: 'Verification email sent' };
+      // Generate JWT token for the new user
+      const payload: JwtPayload = {
+        userId: user.id,
+        email: user.email,
+      };
+
+      const jwtToken = this.jwtService.sign(payload);
+
+      return {
+        message: 'Verification email sent',
+        token: jwtToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          emailVerified: user.profile?.emailVerified ?? false,
+        },
+      };
     } catch (error) {
       if (error instanceof z.ZodError) {
         throw new BadRequestException({
@@ -119,7 +143,7 @@ export class AuthService {
       }
 
       // Check if email is verified
-      if (!user.auth?.emailVerified) {
+      if (!user.profile?.emailVerified) {
         throw new UnauthorizedException('Email not verified');
       }
 
@@ -137,7 +161,7 @@ export class AuthService {
           id: user.id,
           email: user.email,
           name: user.name,
-          emailVerified: user.auth.emailVerified,
+          emailVerified: user.profile?.emailVerified ?? false,
         },
       };
     } catch (error) {
@@ -184,35 +208,36 @@ export class AuthService {
     try {
       const validated = verifyEmailSchema.parse(params);
 
-      const auth = await this.prisma.auth.findFirst({
+      const tokenRecord = await this.prisma.temporaryUserToken.findFirst({
         where: {
-          emailVerificationToken: validated.token,
+          token: validated.token,
+          type: 'VERIFY_EMAIL',
         },
         include: { user: true },
       });
 
-      if (!auth) {
+      if (!tokenRecord) {
         throw new BadRequestException('Invalid verification token');
       }
 
-      if (
-        auth.emailVerificationTokenExpires &&
-        auth.emailVerificationTokenExpires < new Date()
-      ) {
+      if (tokenRecord.expiresAt < new Date()) {
         throw new BadRequestException('Verification token has expired');
       }
 
-      // Update auth record
-      await this.prisma.auth.update({
-        where: { id: auth.id },
-        data: {
-          emailVerified: true,
-          emailVerificationToken: null,
-          emailVerificationTokenExpires: null,
-        },
-      });
+      // Update user profile and delete token
+      await this.prisma.$transaction([
+        this.prisma.userProfile.update({
+          where: { userId: tokenRecord.userId },
+          data: {
+            emailVerified: true,
+          },
+        }),
+        this.prisma.temporaryUserToken.delete({
+          where: { id: tokenRecord.id },
+        }),
+      ]);
 
-      this.logger.log(`Email verified for user: ${auth.user.email}`);
+      this.logger.log(`Email verified for user: ${tokenRecord.user.email}`);
 
       return { message: 'Email verified' };
     } catch (error) {
@@ -240,37 +265,26 @@ export class AuthService {
         throw new NotFoundException('User not found');
       }
 
-      // Check rate limiting
-      const now = new Date();
-      const oneHourAgo = new Date(now.getTime() - 3600000);
-
-      if (
-        user.auth.passwordResetLastRequestAt &&
-        user.auth.passwordResetLastRequestAt > oneHourAgo &&
-        user.auth.passwordResetRequestCount >= 3
-      ) {
-        throw new BadRequestException(
-          'Too many password reset requests. Please try again later.',
-        );
-      }
-
       // Generate reset token
       const resetToken = this.generatePasswordResetToken();
       const resetTokenExpires = new Date();
       resetTokenExpires.setHours(resetTokenExpires.getHours() + 1);
 
-      // Update auth record
-      await this.prisma.auth.update({
-        where: { id: user.auth.id },
+      // Delete any existing password reset tokens for this user
+      await this.prisma.temporaryUserToken.deleteMany({
+        where: {
+          userId: user.id,
+          type: 'PASSWORD_RESET',
+        },
+      });
+
+      // Create new password reset token
+      await this.prisma.temporaryUserToken.create({
         data: {
-          passwordResetToken: resetToken,
-          passwordResetTokenExpires: resetTokenExpires,
-          passwordResetRequestCount:
-            user.auth.passwordResetLastRequestAt &&
-            user.auth.passwordResetLastRequestAt > oneHourAgo
-              ? user.auth.passwordResetRequestCount + 1
-              : 1,
-          passwordResetLastRequestAt: now,
+          userId: user.id,
+          type: 'PASSWORD_RESET',
+          token: resetToken,
+          expiresAt: resetTokenExpires,
         },
       });
 
@@ -296,40 +310,41 @@ export class AuthService {
     try {
       const validated = resetPasswordSchema.parse(params);
 
-      const auth = await this.prisma.auth.findFirst({
+      const tokenRecord = await this.prisma.temporaryUserToken.findFirst({
         where: {
-          passwordResetToken: validated.token,
+          token: validated.token,
+          type: 'PASSWORD_RESET',
         },
-        include: { user: true },
+        include: { user: { include: { auth: true } } },
       });
 
-      if (!auth) {
+      if (!tokenRecord || !tokenRecord.user.auth) {
         throw new BadRequestException('Invalid reset token');
       }
 
-      if (
-        auth.passwordResetTokenExpires &&
-        auth.passwordResetTokenExpires < new Date()
-      ) {
+      if (tokenRecord.expiresAt < new Date()) {
         throw new BadRequestException('Reset token has expired');
       }
 
       // Hash new password
       const passwordHash = await this.hashPassword(validated.newPassword);
 
-      // Update auth record
-      await this.prisma.auth.update({
-        where: { id: auth.id },
-        data: {
-          passwordHash,
-          passwordResetToken: null,
-          passwordResetTokenExpires: null,
-          passwordResetRequestCount: 0,
-          passwordResetLastRequestAt: null,
-        },
-      });
+      // Update auth record and delete token
+      await this.prisma.$transaction([
+        this.prisma.auth.update({
+          where: { id: tokenRecord.user.auth.id },
+          data: {
+            passwordHash,
+          },
+        }),
+        this.prisma.temporaryUserToken.delete({
+          where: { id: tokenRecord.id },
+        }),
+      ]);
 
-      this.logger.log(`Password reset completed for user: ${auth.user.email}`);
+      this.logger.log(
+        `Password reset completed for user: ${tokenRecord.user.email}`,
+      );
 
       return { message: 'Password reset successful' };
     } catch (error) {
@@ -350,33 +365,49 @@ export class AuthService {
 
       const user = await this.prisma.user.findUnique({
         where: { email: validated.email },
-        include: { auth: true },
+        include: { auth: true, profile: true, tokens: true },
       });
 
       if (!user || !user.auth) {
         throw new NotFoundException('User not found');
       }
 
-      // Generate new token if expired or doesn't exist
-      let verificationToken = user.auth.emailVerificationToken;
-      let verificationTokenExpires = user.auth.emailVerificationTokenExpires;
+      // Find existing valid token
+      const existingToken = user.tokens.find(
+        (t) =>
+          t.type === 'VERIFY_EMAIL' &&
+          t.expiresAt > new Date() &&
+          !user.profile?.emailVerified,
+      );
 
-      if (
-        !verificationToken ||
-        !verificationTokenExpires ||
-        verificationTokenExpires < new Date()
-      ) {
+      let verificationToken: string;
+      let verificationTokenExpires: Date;
+
+      if (existingToken) {
+        verificationToken = existingToken.token;
+        verificationTokenExpires = existingToken.expiresAt;
+      } else {
+        // Delete expired tokens
+        await this.prisma.temporaryUserToken.deleteMany({
+          where: {
+            userId: user.id,
+            type: 'VERIFY_EMAIL',
+          },
+        });
+
+        // Generate new token
         verificationToken = this.generateEmailVerificationToken();
         verificationTokenExpires = new Date();
         verificationTokenExpires.setHours(
           verificationTokenExpires.getHours() + 48,
         );
 
-        await this.prisma.auth.update({
-          where: { id: user.auth.id },
+        await this.prisma.temporaryUserToken.create({
           data: {
-            emailVerificationToken: verificationToken,
-            emailVerificationTokenExpires: verificationTokenExpires,
+            userId: user.id,
+            type: 'VERIFY_EMAIL',
+            token: verificationToken,
+            expiresAt: verificationTokenExpires,
           },
         });
       }
@@ -406,7 +437,7 @@ export class AuthService {
 
       const user = await this.prisma.user.findUnique({
         where: { email: validated.email },
-        include: { auth: true },
+        include: { auth: true, profile: true },
       });
 
       if (!user || !user.auth) {

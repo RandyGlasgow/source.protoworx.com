@@ -54,8 +54,8 @@ describe('JwtStrategy', () => {
     expect(strategy).toBeDefined();
   });
 
-  it('should return user with auth for valid payload', async () => {
-    const { user, auth } = createTestUserWithAuth();
+  it('should return user with auth and profile for valid payload', async () => {
+    const { user, auth, profile } = createTestUserWithAuth();
     const payload: JwtPayload = {
       userId: user.id,
       email: user.email,
@@ -64,17 +64,19 @@ describe('JwtStrategy', () => {
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
       ...user,
       auth,
+      profile,
     });
 
     const result = await strategy.validate(payload);
 
       expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
       where: { id: payload.userId },
-      include: { auth: true },
+      include: { auth: true, profile: true },
     });
     expect(result).toEqual({
       ...user,
       auth,
+      profile,
     });
   });
 
@@ -110,8 +112,8 @@ describe('JwtStrategy', () => {
     await expect(strategy.validate(payload)).rejects.toThrow('User not found');
   });
 
-  it('should load user with auth relation', async () => {
-    const { user, auth } = createTestUserWithAuth();
+  it('should load user with auth and profile relations', async () => {
+    const { user, auth, profile } = createTestUserWithAuth();
     const payload: JwtPayload = {
       userId: user.id,
       email: user.email,
@@ -120,13 +122,14 @@ describe('JwtStrategy', () => {
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
       ...user,
       auth,
+      profile,
     });
 
     await strategy.validate(payload);
 
       expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
       where: { id: payload.userId },
-      include: { auth: true },
+      include: { auth: true, profile: true },
     });
   });
 });

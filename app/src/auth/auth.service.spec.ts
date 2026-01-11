@@ -5,7 +5,7 @@ import { ConflictException, UnauthorizedException, NotFoundException, BadRequest
 import { AuthService } from './auth.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ResendService } from 'src/resend/resend.service';
-import { createTestUserWithAuth, VALID_PASSWORD, VALID_EMAIL, createValidUuid } from 'src/test-helpers/auth-test-helpers';
+import { createTestUserWithAuth, VALID_PASSWORD, VALID_EMAIL, createValidUuid, createTestUserProfile } from 'src/test-helpers/auth-test-helpers';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -25,6 +25,16 @@ describe('AuthService', () => {
         findFirst: jest.fn() as jest.Mock,
         update: jest.fn() as jest.Mock,
       },
+      userProfile: {
+        update: jest.fn() as jest.Mock,
+      },
+      temporaryUserToken: {
+        findFirst: jest.fn() as jest.Mock,
+        create: jest.fn() as jest.Mock,
+        deleteMany: jest.fn() as jest.Mock,
+        delete: jest.fn() as jest.Mock,
+      },
+      $transaction: jest.fn((callback) => callback(mockPrismaService)) as jest.Mock,
     };
 
     const mockJwtService = {
@@ -147,14 +157,15 @@ describe('AuthService', () => {
   });
 
   describe('signUp', () => {
-    it('should create user and auth record, send verification email', async () => {
-      const { user, auth } = createTestUserWithAuth();
+    it('should create user, auth, profile and token records, send verification email', async () => {
+      const { user, auth, profile } = createTestUserWithAuth();
       const verificationToken = createValidUuid();
       
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue(null);
       (prismaService.user.create as jest.Mock).mockResolvedValue({
         ...user,
         auth,
+        profile,
       });
       resendService.sendVerificationEmail.mockResolvedValue({ id: 'email-id' });
       
@@ -170,7 +181,31 @@ describe('AuthService', () => {
       expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
         where: { email: VALID_EMAIL },
       });
-      expect(prismaService.user.create as jest.Mock).toHaveBeenCalled();
+      expect(prismaService.user.create as jest.Mock).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          email: VALID_EMAIL,
+          name: 'Test User',
+          auth: {
+            create: {
+              passwordHash: expect.any(String),
+            },
+          },
+          profile: {
+            create: {
+              emailVerified: false,
+              onboardingComplete: false,
+            },
+          },
+          tokens: {
+            create: {
+              type: 'VERIFY_EMAIL',
+              token: verificationToken,
+              expiresAt: expect.any(Date),
+            },
+          },
+        }),
+        include: { auth: true, profile: true },
+      });
       expect(resendService.sendVerificationEmail).toHaveBeenCalledWith(
         VALID_EMAIL,
         verificationToken,
@@ -203,13 +238,14 @@ describe('AuthService', () => {
 
   describe('signIn', () => {
     it('should return JWT token and user data for valid credentials', async () => {
-      const { user, auth } = createTestUserWithAuth(undefined, { emailVerified: true });
+      const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: true });
       const token = 'jwt-token';
       const passwordHash = await bcrypt.hash('password123', 10);
       
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
         auth: { ...auth, passwordHash },
+        profile,
       });
       jwtService.sign.mockReturnValue(token);
 
@@ -224,15 +260,17 @@ describe('AuthService', () => {
       });
       expect(result).toHaveProperty('token', token);
       expect(result).toHaveProperty('user');
+      expect(result.user.emailVerified).toBe(true);
     });
 
     it('should throw UnauthorizedException for invalid credentials', async () => {
-      const { user, auth } = createTestUserWithAuth(undefined, { emailVerified: true });
+      const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: true });
       const passwordHash = await bcrypt.hash('correctpassword', 10);
       
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
         auth: { ...auth, passwordHash },
+        profile,
       });
 
       await expect(
@@ -244,12 +282,13 @@ describe('AuthService', () => {
     });
 
     it('should throw UnauthorizedException if email not verified', async () => {
-      const { user, auth } = createTestUserWithAuth(undefined, { emailVerified: false });
+      const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: false });
       const passwordHash = await bcrypt.hash('password123', 10);
       
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
         auth: { ...auth, passwordHash },
+        profile,
       });
 
       await expect(
@@ -304,45 +343,47 @@ describe('AuthService', () => {
   });
 
   describe('verifyEmail', () => {
-    it('should verify email and clear token', async () => {
+    it('should verify email and delete token', async () => {
       const token = createValidUuid();
-      const { user, auth } = createTestUserWithAuth();
-      const authWithToken = {
-        ...auth,
-        emailVerificationToken: token,
-        emailVerificationTokenExpires: new Date(Date.now() + 3600000),
+      const { user } = createTestUserWithAuth();
+      const tokenRecord = {
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'VERIFY_EMAIL' as const,
+        token,
+        expiresAt: new Date(Date.now() + 3600000),
+        meta: null,
+        createdAt: new Date(),
+        user,
       };
 
-      (prismaService.auth.findFirst as jest.Mock).mockResolvedValue({
-        ...authWithToken,
-        user,
-      });
-      (prismaService.auth.update as jest.Mock).mockResolvedValue({
-        ...authWithToken,
-        emailVerified: true,
-        emailVerificationToken: null,
-        emailVerificationTokenExpires: null,
+      (prismaService.temporaryUserToken.findFirst as jest.Mock).mockResolvedValue(tokenRecord);
+      (prismaService.userProfile.update as jest.Mock).mockResolvedValue({});
+      (prismaService.temporaryUserToken.delete as jest.Mock).mockResolvedValue({});
+      (prismaService.$transaction as jest.Mock).mockImplementation(async (operations) => {
+        // Execute the operations and return their results
+        const results = await Promise.all(operations.map((op: Promise<unknown>) => op));
+        return results;
       });
 
       const result = await service.verifyEmail({ token });
 
-      expect(prismaService.auth.findFirst as jest.Mock).toHaveBeenCalledWith({
-        where: { emailVerificationToken: token },
+      expect(prismaService.temporaryUserToken.findFirst as jest.Mock).toHaveBeenCalledWith({
+        where: { token, type: 'VERIFY_EMAIL' },
         include: { user: true },
       });
-      expect(prismaService.auth.update as jest.Mock).toHaveBeenCalledWith({
-        where: { id: auth.id },
-        data: {
-          emailVerified: true,
-          emailVerificationToken: null,
-          emailVerificationTokenExpires: null,
-        },
+      expect(prismaService.userProfile.update as jest.Mock).toHaveBeenCalledWith({
+        where: { userId: user.id },
+        data: { emailVerified: true },
+      });
+      expect(prismaService.temporaryUserToken.delete as jest.Mock).toHaveBeenCalledWith({
+        where: { id: tokenRecord.id },
       });
       expect(result).toEqual({ message: 'Email verified' });
     });
 
     it('should throw BadRequestException for invalid token', async () => {
-      (prismaService.auth.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaService.temporaryUserToken.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
         service.verifyEmail({ token: createValidUuid() }),
@@ -351,14 +392,18 @@ describe('AuthService', () => {
 
     it('should throw BadRequestException for expired token', async () => {
       const token = createValidUuid();
-      const { user, auth } = createTestUserWithAuth();
+      const { user } = createTestUserWithAuth();
       const expiredDate = new Date();
       expiredDate.setHours(expiredDate.getHours() - 1);
 
-      (prismaService.auth.findFirst as jest.Mock).mockResolvedValue({
-        ...auth,
-        emailVerificationToken: token,
-        emailVerificationTokenExpires: expiredDate,
+      (prismaService.temporaryUserToken.findFirst as jest.Mock).mockResolvedValue({
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'VERIFY_EMAIL' as const,
+        token,
+        expiresAt: expiredDate,
+        meta: null,
+        createdAt: new Date(),
         user,
       });
 
@@ -377,9 +422,15 @@ describe('AuthService', () => {
         ...user,
         auth,
       });
-      (prismaService.auth.update as jest.Mock).mockResolvedValue({
-        ...auth,
-        passwordResetToken: resetToken,
+      (prismaService.temporaryUserToken.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prismaService.temporaryUserToken.create as jest.Mock).mockResolvedValue({
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'PASSWORD_RESET',
+        token: resetToken,
+        expiresAt: new Date(),
+        meta: null,
+        createdAt: new Date(),
       });
       resendService.sendPasswordResetEmail.mockResolvedValue({ id: 'email-id' });
       jest.spyOn(service, 'generatePasswordResetToken').mockReturnValue(resetToken);
@@ -389,6 +440,17 @@ describe('AuthService', () => {
       expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
         where: { email: VALID_EMAIL },
         include: { auth: true },
+      });
+      expect(prismaService.temporaryUserToken.deleteMany as jest.Mock).toHaveBeenCalledWith({
+        where: { userId: user.id, type: 'PASSWORD_RESET' },
+      });
+      expect(prismaService.temporaryUserToken.create as jest.Mock).toHaveBeenCalledWith({
+        data: {
+          userId: user.id,
+          type: 'PASSWORD_RESET',
+          token: resetToken,
+          expiresAt: expect.any(Date),
+        },
       });
       expect(resendService.sendPasswordResetEmail).toHaveBeenCalledWith(
         VALID_EMAIL,
@@ -404,46 +466,30 @@ describe('AuthService', () => {
         service.requestPasswordReset({ email: VALID_EMAIL }),
       ).rejects.toThrow(NotFoundException);
     });
-
-    it('should throw BadRequestException if rate limited', async () => {
-      const { user, auth } = createTestUserWithAuth();
-      // Set last request to 30 minutes ago (within 1 hour window, so should be rate limited)
-      const thirtyMinutesAgo = new Date();
-      thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
-
-      (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
-        ...user,
-        auth: {
-          ...auth,
-          passwordResetRequestCount: 3,
-          passwordResetLastRequestAt: thirtyMinutesAgo,
-        },
-      });
-
-      await expect(
-        service.requestPasswordReset({ email: VALID_EMAIL }),
-      ).rejects.toThrow(BadRequestException);
-    });
   });
 
   describe('resetPassword', () => {
-    it('should reset password and clear token', async () => {
+    it('should reset password and delete token', async () => {
       const token = createValidUuid();
       const { user, auth } = createTestUserWithAuth();
-      const authWithToken = {
-        ...auth,
-        passwordResetToken: token,
-        passwordResetTokenExpires: new Date(Date.now() + 3600000),
+      const tokenRecord = {
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'PASSWORD_RESET' as const,
+        token,
+        expiresAt: new Date(Date.now() + 3600000),
+        meta: null,
+        createdAt: new Date(),
+        user: { ...user, auth },
       };
 
-      (prismaService.auth.findFirst as jest.Mock).mockResolvedValue({
-        ...authWithToken,
-        user,
-      });
-      (prismaService.auth.update as jest.Mock).mockResolvedValue({
-        ...authWithToken,
-        passwordResetToken: null,
-        passwordResetTokenExpires: null,
+      (prismaService.temporaryUserToken.findFirst as jest.Mock).mockResolvedValue(tokenRecord);
+      (prismaService.auth.update as jest.Mock).mockResolvedValue({ ...auth });
+      (prismaService.temporaryUserToken.delete as jest.Mock).mockResolvedValue({});
+      (prismaService.$transaction as jest.Mock).mockImplementation(async (operations) => {
+        // Execute the operations and return their results
+        const results = await Promise.all(operations.map((op: Promise<unknown>) => op));
+        return results;
       });
 
       const result = await service.resetPassword({
@@ -451,12 +497,22 @@ describe('AuthService', () => {
         newPassword: VALID_PASSWORD,
       });
 
-      expect(prismaService.auth.update as jest.Mock).toHaveBeenCalled();
+      expect(prismaService.temporaryUserToken.findFirst as jest.Mock).toHaveBeenCalledWith({
+        where: { token, type: 'PASSWORD_RESET' },
+        include: { user: { include: { auth: true } } },
+      });
+      expect(prismaService.auth.update as jest.Mock).toHaveBeenCalledWith({
+        where: { id: auth.id },
+        data: { passwordHash: expect.any(String) },
+      });
+      expect(prismaService.temporaryUserToken.delete as jest.Mock).toHaveBeenCalledWith({
+        where: { id: tokenRecord.id },
+      });
       expect(result).toEqual({ message: 'Password reset successful' });
     });
 
     it('should throw BadRequestException for invalid token', async () => {
-      (prismaService.auth.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaService.temporaryUserToken.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(
         service.resetPassword({
@@ -472,11 +528,15 @@ describe('AuthService', () => {
       const expiredDate = new Date();
       expiredDate.setHours(expiredDate.getHours() - 1);
 
-      (prismaService.auth.findFirst as jest.Mock).mockResolvedValue({
-        ...auth,
-        passwordResetToken: token,
-        passwordResetTokenExpires: expiredDate,
-        user,
+      (prismaService.temporaryUserToken.findFirst as jest.Mock).mockResolvedValue({
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'PASSWORD_RESET' as const,
+        token,
+        expiresAt: expiredDate,
+        meta: null,
+        createdAt: new Date(),
+        user: { ...user, auth },
       });
 
       await expect(
@@ -490,17 +550,23 @@ describe('AuthService', () => {
 
   describe('resendVerificationEmail', () => {
     it('should resend email with existing valid token', async () => {
-      const { user, auth } = createTestUserWithAuth();
+      const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: false });
       const token = createValidUuid();
-      const authWithToken = {
-        ...auth,
-        emailVerificationToken: token,
-        emailVerificationTokenExpires: new Date(Date.now() + 3600000),
+      const tokenRecord = {
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'VERIFY_EMAIL' as const,
+        token,
+        expiresAt: new Date(Date.now() + 3600000),
+        meta: null,
+        createdAt: new Date(),
       };
 
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
-        auth: authWithToken,
+        auth,
+        profile,
+        tokens: [tokenRecord],
       });
       resendService.sendVerificationEmail.mockResolvedValue({ id: 'email-id' });
 
@@ -514,29 +580,51 @@ describe('AuthService', () => {
     });
 
     it('should generate new token if expired', async () => {
-      const { user, auth } = createTestUserWithAuth();
+      const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: false });
       const expiredDate = new Date();
       expiredDate.setHours(expiredDate.getHours() - 1);
       const newToken = createValidUuid();
 
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
-        auth: {
-          ...auth,
-          emailVerificationToken: 'old-token',
-          emailVerificationTokenExpires: expiredDate,
-        },
+        auth,
+        profile,
+        tokens: [{
+          id: createValidUuid(),
+          userId: user.id,
+          type: 'VERIFY_EMAIL' as const,
+          token: 'old-token',
+          expiresAt: expiredDate,
+          meta: null,
+          createdAt: new Date(),
+        }],
       });
-      (prismaService.auth.update as jest.Mock).mockResolvedValue({
-        ...auth,
-        emailVerificationToken: newToken,
+      (prismaService.temporaryUserToken.deleteMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (prismaService.temporaryUserToken.create as jest.Mock).mockResolvedValue({
+        id: createValidUuid(),
+        userId: user.id,
+        type: 'VERIFY_EMAIL',
+        token: newToken,
+        expiresAt: new Date(),
+        meta: null,
+        createdAt: new Date(),
       });
       resendService.sendVerificationEmail.mockResolvedValue({ id: 'email-id' });
       jest.spyOn(service, 'generateEmailVerificationToken').mockReturnValue(newToken);
 
       await service.resendVerificationEmail({ email: VALID_EMAIL });
 
-      expect(prismaService.auth.update as jest.Mock).toHaveBeenCalled();
+      expect(prismaService.temporaryUserToken.deleteMany as jest.Mock).toHaveBeenCalledWith({
+        where: { userId: user.id, type: 'VERIFY_EMAIL' },
+      });
+      expect(prismaService.temporaryUserToken.create as jest.Mock).toHaveBeenCalledWith({
+        data: {
+          userId: user.id,
+          type: 'VERIFY_EMAIL',
+          token: newToken,
+          expiresAt: expect.any(Date),
+        },
+      });
       expect(resendService.sendVerificationEmail).toHaveBeenCalledWith(
         VALID_EMAIL,
         newToken,
@@ -554,12 +642,13 @@ describe('AuthService', () => {
 
   describe('validateUser', () => {
     it('should return user for valid credentials', async () => {
-      const { user, auth } = createTestUserWithAuth();
+      const { user, auth, profile } = createTestUserWithAuth();
       const passwordHash = await bcrypt.hash('password123', 10);
 
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
         auth: { ...auth, passwordHash },
+        profile,
       });
 
       const result = await service.validateUser({
@@ -569,15 +658,20 @@ describe('AuthService', () => {
 
       expect(result).toBeDefined();
       expect(result?.id).toBe(user.id);
+      expect(prismaService.user.findUnique as jest.Mock).toHaveBeenCalledWith({
+        where: { email: VALID_EMAIL },
+        include: { auth: true, profile: true },
+      });
     });
 
     it('should return null for invalid password', async () => {
-      const { user, auth } = createTestUserWithAuth();
+      const { user, auth, profile } = createTestUserWithAuth();
       const passwordHash = await bcrypt.hash('correctpassword', 10);
 
       (prismaService.user.findUnique as jest.Mock).mockResolvedValue({
         ...user,
         auth: { ...auth, passwordHash },
+        profile,
       });
 
       const result = await service.validateUser({

@@ -1,19 +1,24 @@
 import {
-  Controller,
-  Post,
-  Get,
   Body,
+  Controller,
+  Get,
   Headers,
+  Post,
+  Res,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Response } from 'express';
 import { AuthService } from './auth.service';
-import { SignUpDto } from './dto/sign-up.dto';
-import { SignInDto } from './dto/sign-in.dto';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { SignInDto } from './dto/sign-in.dto';
+import { SignUpDto } from './dto/sign-up.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TransformResponseInterceptor } from './interceptors/transform-response.interceptor';
 
 @Controller('auth')
@@ -23,14 +28,30 @@ export class AuthController {
 
   @Post('sign-up')
   @Throttle({ default: { limit: 3, ttl: 3600000 } }) // 3 requests per hour
-  async signUp(@Body() dto: SignUpDto) {
-    return this.authService.signUp(dto);
+  async signUp(
+    @Body() dto: SignUpDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.signUp(dto);
+
+    if (result.token) {
+      res.setHeader('Authorization', `Bearer ${result.token}`);
+    }
+
+    return result;
   }
 
   @Post('sign-in')
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
-  async signIn(@Body() dto: SignInDto) {
-    return this.authService.signIn(dto);
+  async signIn(
+    @Body() dto: SignInDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.signIn(dto);
+    if (result.token) {
+      res.setHeader('Authorization', `Bearer ${result.token}`);
+    }
+    return result;
   }
 
   @Get('verify')
@@ -59,5 +80,11 @@ export class AuthController {
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  me(@CurrentUser() user: unknown) {
+    return user;
   }
 }

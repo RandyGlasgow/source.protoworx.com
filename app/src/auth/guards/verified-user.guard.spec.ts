@@ -19,11 +19,12 @@ describe('VerifiedUserGuard', () => {
   });
 
   it('should allow request with verified user', () => {
-    const { user, auth } = createTestUserWithAuth(undefined, { emailVerified: true });
+    const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: true });
     const mockRequest = {
       user: {
         ...user,
         auth,
+        profile,
       },
     };
 
@@ -52,11 +53,12 @@ describe('VerifiedUserGuard', () => {
   });
 
   it('should throw UnauthorizedException if email not verified', () => {
-    const { user, auth } = createTestUserWithAuth(undefined, { emailVerified: false });
+    const { user, auth, profile } = createTestUserWithAuth(undefined, undefined, { emailVerified: false });
     const mockRequest = {
       user: {
         ...user,
         auth,
+        profile,
       },
     };
 

@@ -244,11 +244,14 @@ describe('Auth (e2e)', () => {
         false,
       );
 
-      // Get the verification token from the auth record
-      const auth = await prisma.auth.findUnique({
-        where: { userId: user.id },
+      // Get the verification token from the temporary_user_token table
+      const tokenRecord = await prisma.temporaryUserToken.findFirst({
+        where: {
+          userId: user.id,
+          type: 'VERIFY_EMAIL',
+        },
       });
-      verificationToken = auth?.emailVerificationToken || '';
+      verificationToken = tokenRecord?.token || '';
     });
 
     it('should verify email with valid token', () => {
@@ -320,11 +323,12 @@ describe('Auth (e2e)', () => {
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 1);
 
-      await prisma.auth.update({
-        where: { userId: user.id },
+      await prisma.temporaryUserToken.create({
         data: {
-          passwordResetToken: resetTokenValue,
-          passwordResetTokenExpires: expiresAt,
+          userId: user.id,
+          type: 'PASSWORD_RESET',
+          token: resetTokenValue,
+          expiresAt,
         },
       });
 
@@ -393,12 +397,13 @@ describe('Auth (e2e)', () => {
       // 2. Get verification token from database
       const user = await prisma.user.findUnique({
         where: { email: flowEmail },
-        include: { auth: true },
+        include: { profile: true, tokens: true },
       });
       expect(user).toBeDefined();
-      expect(user?.auth?.emailVerified).toBe(false);
+      expect(user?.profile?.emailVerified).toBe(false);
 
-      const verificationToken = user?.auth?.emailVerificationToken;
+      const tokenRecord = user?.tokens.find(t => t.type === 'VERIFY_EMAIL');
+      const verificationToken = tokenRecord?.token;
       expect(verificationToken).toBeDefined();
 
       // 3. Verify email

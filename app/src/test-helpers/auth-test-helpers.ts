@@ -1,5 +1,11 @@
 import { randomUUID } from 'crypto';
-import { User, Auth } from 'generated/prisma/client';
+import {
+  User,
+  Auth,
+  UserProfile,
+  TemporaryUserToken,
+  TemporaryUserTokenType,
+} from 'generated/prisma/client';
 
 export const createTestUser = (overrides?: Partial<User>): User => {
   return {
@@ -20,15 +26,42 @@ export const createTestAuth = (
     id: randomUUID(),
     userId,
     passwordHash: '$2b$10$hashedpassword',
-    emailVerified: false,
-    emailVerificationToken: null,
-    emailVerificationTokenExpires: null,
-    passwordResetToken: null,
-    passwordResetTokenExpires: null,
-    passwordResetRequestCount: 0,
-    passwordResetLastRequestAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    ...overrides,
+  };
+};
+
+export const createTestUserProfile = (
+  userId: string,
+  overrides?: Partial<UserProfile>,
+): UserProfile => {
+  return {
+    id: randomUUID(),
+    userId,
+    emailVerified: false,
+    onboardingComplete: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+};
+
+export const createTestTemporaryUserToken = (
+  userId: string,
+  type: TemporaryUserTokenType,
+  overrides?: Partial<TemporaryUserToken>,
+): TemporaryUserToken => {
+  const expiresAt = new Date();
+  expiresAt.setHours(expiresAt.getHours() + 48);
+  return {
+    id: randomUUID(),
+    userId,
+    type,
+    token: randomUUID(),
+    expiresAt,
+    meta: null,
+    createdAt: new Date(),
     ...overrides,
   };
 };
@@ -36,10 +69,12 @@ export const createTestAuth = (
 export const createTestUserWithAuth = (
   userOverrides?: Partial<User>,
   authOverrides?: Partial<Auth>,
+  profileOverrides?: Partial<UserProfile>,
 ) => {
   const user = createTestUser(userOverrides);
   const auth = createTestAuth(user.id, authOverrides);
-  return { user, auth };
+  const profile = createTestUserProfile(user.id, profileOverrides);
+  return { user, auth, profile };
 };
 
 export const createValidJwtToken = (): string => {

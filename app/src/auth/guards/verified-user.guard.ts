@@ -18,7 +18,7 @@ export class VerifiedUserGuard implements CanActivate {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    if (!user.auth?.emailVerified) {
+    if (!user.profile?.emailVerified) {
       throw new UnauthorizedException('Email not verified');
     }
 

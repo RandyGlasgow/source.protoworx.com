@@ -1,6 +1,8 @@
 import { PrismaService } from 'src/prisma/prisma.service';
 
 export const cleanupTestData = async (prisma: PrismaService) => {
+  await prisma.temporaryUserToken.deleteMany({});
+  await prisma.userProfile.deleteMany({});
   await prisma.auth.deleteMany({});
   await prisma.user.deleteMany({});
 };
@@ -18,12 +20,18 @@ export const createTestUserInDb = async (
       auth: {
         create: {
           passwordHash,
+        },
+      },
+      profile: {
+        create: {
           emailVerified,
+          onboardingComplete: false,
         },
       },
     },
     include: {
       auth: true,
+      profile: true,
     },
   });
   return user;
