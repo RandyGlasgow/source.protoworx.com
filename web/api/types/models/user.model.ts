@@ -4,7 +4,7 @@ export type User = {
   name?: string;
   username?: string;
   hasOnboarded: boolean;
-  auth: {
-    emailVerified: boolean;
-  };
+  emailVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
 };

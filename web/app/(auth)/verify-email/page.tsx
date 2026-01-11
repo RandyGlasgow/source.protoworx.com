@@ -8,20 +8,49 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useResendVerification } from '@/hooks/use-resend-verification';
+import { useUser } from '@/hooks/use-user';
 import { useVerifyEmail } from '@/hooks/use-verify-email';
 import { CheckCircleIcon, MailIcon, XCircleIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { z } from 'zod';
+
+const PENDING_VERIFICATION_EMAIL_KEY = 'pending-verification-email';
+const emailSchema = z.string().email('Invalid email address');
 
 export default function VerifyEmailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const verifyEmail = useVerifyEmail();
   const resendVerification = useResendVerification();
+  const { data: user, isLoading: isUserLoading } = useUser();
 
   // Check for token in URL
   const token = searchParams.get('token');
+
+  // State for email from sessionStorage or input
+  const [emailFromStorage] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem(PENDING_VERIFICATION_EMAIL_KEY);
+    }
+    return null;
+  });
+  const [emailInput, setEmailInput] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  // Redirect if user is already verified
+  useEffect(() => {
+    if (!isUserLoading && user && user.emailVerified) {
+      if (!user.hasOnboarded) {
+        router.push('/onboarding');
+      } else {
+        router.push('/explore');
+      }
+    }
+  }, [user, isUserLoading, router]);
 
   useEffect(() => {
     if (token) {
@@ -38,13 +67,27 @@ export default function VerifyEmailPage() {
   }, [token, verifyEmail, router]);
 
   const handleResend = async () => {
-    // For resend, we'd need to store the email somewhere
-    // For now, show a message to check email again
+    setEmailError(null);
+
+    // Determine which email to use
+    let emailToUse: string;
+    if (emailFromStorage) {
+      emailToUse = emailFromStorage;
+    } else {
+      // Validate email input
+      const validationResult = emailSchema.safeParse(emailInput);
+      if (!validationResult.success) {
+        setEmailError(
+          validationResult.error.issues[0]?.message || 'Invalid email address',
+        );
+        return;
+      }
+      emailToUse = emailInput;
+    }
+
     try {
-      // This is a placeholder - in real app, you'd need to get the email
-      // from localStorage or have the user re-enter it
-      await resendVerification.mutateAsync('user@example.com');
-    } catch (error) {
+      await resendVerification.mutateAsync(emailToUse);
+    } catch {
       // Error handled by mutation
     }
   };
@@ -53,7 +96,7 @@ export default function VerifyEmailPage() {
   if (token) {
     if (verifyEmail.isPending) {
       return (
-        <div className="container flex min-h-screen items-center justify-center px-4 py-12">
+        <div className="container flex min-h-[85vh] items-center justify-center px-4 py-12">
           <Card className="w-full max-w-md">
             <CardHeader className="text-center">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -118,7 +161,7 @@ export default function VerifyEmailPage() {
 
   // Waiting mode (no token)
   return (
-    <div className="container flex min-h-screen items-center justify-center px-4 py-12">
+    <div className="container flex min-h-[85vh] items-center justify-center px-4 py-12">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -135,6 +178,25 @@ export default function VerifyEmailPage() {
             Didn&apos;t receive the email? Check your spam folder or request a
             new one.
           </p>
+          {!emailFromStorage && (
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                value={emailInput}
+                onChange={(e) => {
+                  setEmailInput(e.target.value);
+                  setEmailError(null);
+                }}
+                disabled={resendVerification.isPending}
+              />
+              {emailError && (
+                <p className="text-sm text-destructive">{emailError}</p>
+              )}
+            </div>
+          )}
           <Button
             onClick={handleResend}
             variant="outline"

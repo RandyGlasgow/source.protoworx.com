@@ -376,8 +376,9 @@ export class AuthService {
         include: { auth: true },
       });
 
+      // Silently return success if user doesn't exist to prevent email enumeration
       if (!user || !user.auth) {
-        throw new NotFoundException('User not found');
+        return { message: 'Verification email sent' };
       }
 
       // Generate new token if expired or doesn't exist

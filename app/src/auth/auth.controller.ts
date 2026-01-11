@@ -92,6 +92,15 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: Prisma.UserGetPayload<{ include: { auth: true } }>) {
-    return user;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      username: user.username,
+      hasOnboarded: user.hasOnboarded,
+      emailVerified: user.auth?.emailVerified ?? false,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
   }
 }

@@ -20,7 +20,7 @@ export default async function OnboardingLayout({
 
   console.log({ user });
 
-  if (!user || !user.auth.emailVerified) {
+  if (!user || !user.emailVerified) {
     return redirect('/verify-email');
   }
 

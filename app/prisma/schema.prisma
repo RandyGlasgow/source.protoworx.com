@@ -23,6 +23,8 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   auth         Auth?
+
+  @@index([email])
 }
 
 model Auth {
