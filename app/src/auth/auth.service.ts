@@ -1,10 +1,10 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
-  UnauthorizedException,
-  ConflictException,
   NotFoundException,
-  BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -13,25 +13,27 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ResendService } from 'src/resend/resend.service';
 import { z } from 'zod';
-import {
-  signUpSchema,
-  signInSchema,
-  verifyTokenSchema,
-  verifyEmailSchema,
-  requestPasswordResetSchema,
-  resetPasswordSchema,
-  resendVerificationSchema,
-  validateUserSchema,
-  type SignUpInput,
-  type SignInInput,
-  type VerifyTokenInput,
-  type VerifyEmailInput,
-  type RequestPasswordResetInput,
-  type ResetPasswordInput,
-  type ResendVerificationInput,
-  type ValidateUserInput,
-} from './validators/auth.validator';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
+import {
+  onboardingSchema,
+  requestPasswordResetSchema,
+  resendVerificationSchema,
+  resetPasswordSchema,
+  signInSchema,
+  signUpSchema,
+  validateUserSchema,
+  verifyEmailSchema,
+  verifyTokenSchema,
+  type OnboardingInput,
+  type RequestPasswordResetInput,
+  type ResendVerificationInput,
+  type ResetPasswordInput,
+  type SignInInput,
+  type SignUpInput,
+  type ValidateUserInput,
+  type VerifyEmailInput,
+  type VerifyTokenInput,
+} from './validators/auth.validator';
 
 @Injectable()
 export class AuthService {
@@ -137,6 +139,8 @@ export class AuthService {
           id: user.id,
           email: user.email,
           name: user.name,
+          username: user.username,
+          hasOnboarded: user.hasOnboarded,
           emailVerified: user.auth.emailVerified,
         },
       };
@@ -214,7 +218,26 @@ export class AuthService {
 
       this.logger.log(`Email verified for user: ${auth.user.email}`);
 
-      return { message: 'Email verified' };
+      // Generate JWT token for auto-login
+      const payload: JwtPayload = {
+        userId: auth.user.id,
+        email: auth.user.email,
+      };
+
+      const token = this.jwtService.sign(payload);
+
+      return {
+        message: 'Email verified',
+        token,
+        user: {
+          id: auth.user.id,
+          email: auth.user.email,
+          name: auth.user.name,
+          username: auth.user.username,
+          hasOnboarded: auth.user.hasOnboarded,
+          emailVerified: true,
+        },
+      };
     } catch (error) {
       if (error instanceof z.ZodError) {
         throw new BadRequestException({
@@ -442,5 +465,54 @@ export class AuthService {
 
   generatePasswordResetToken(): string {
     return randomUUID();
+  }
+
+  async onboarding(userId: string, params: OnboardingInput) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      const validated = onboardingSchema.parse(params);
+
+      // Check if username is already taken
+      const existingUser = await this.prisma.user.findUnique({
+        where: { username: validated.username },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('Username already taken');
+      }
+
+      // Update user with username and set hasOnboarded to true
+      const updatedUser = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          username: validated.username,
+          hasOnboarded: true,
+        },
+        include: { auth: true },
+      });
+
+      this.logger.log(`User onboarded: ${updatedUser.email}`);
+
+      return {
+        message: 'Onboarding completed',
+        user: {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          name: updatedUser.name,
+          username: updatedUser.username,
+          hasOnboarded: updatedUser.hasOnboarded,
+          emailVerified: updatedUser.auth?.emailVerified || false,
+        },
+      };
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        throw new BadRequestException({
+          success: false,
+          message: 'Validation failed',
+          errors: error.issues,
+        });
+      }
+      throw error;
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { Header } from '@/components/header';
+import { Header } from '@/components/header/header';
 import { Meta } from '@storybook/nextjs-vite';
 
 const HeaderStory = () => {

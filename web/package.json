@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "dev:storybook": "storybook dev -p 6006 --no-open"
+    "dev:storybook": "storybook dev -p 6006 --no-open",
+    "test": "vitest"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",

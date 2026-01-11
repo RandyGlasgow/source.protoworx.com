@@ -1,19 +1,26 @@
 import {
-  Controller,
-  Post,
-  Get,
   Body,
+  Controller,
+  Get,
   Headers,
+  Post,
+  Res,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Response } from 'express';
+import { Prisma } from 'generated/prisma/client';
 import { AuthService } from './auth.service';
-import { SignUpDto } from './dto/sign-up.dto';
-import { SignInDto } from './dto/sign-in.dto';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
+import { OnboardingDto } from './dto/onboarding.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { SignInDto } from './dto/sign-in.dto';
+import { SignUpDto } from './dto/sign-up.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TransformResponseInterceptor } from './interceptors/transform-response.interceptor';
 
 @Controller('auth')
@@ -28,9 +35,24 @@ export class AuthController {
   }
 
   @Post('sign-in')
-  @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
-  async signIn(@Body() dto: SignInDto) {
-    return this.authService.signIn(dto);
+  @Throttle({ default: { limit: 50, ttl: 60000 } }) // 50 requests per minute
+  async signIn(
+    @Body() dto: SignInDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.signIn(dto);
+
+    // Set httpOnly cookie for defense in depth
+    res.cookie('auth_token', result.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+    // set the header bearer token
+    res.setHeader('Authorization', `Bearer ${result.token}`);
+
+    return result;
   }
 
   @Get('verify')
@@ -40,8 +62,23 @@ export class AuthController {
   }
 
   @Post('verify-email')
-  async verifyEmail(@Body() dto: VerifyEmailDto) {
-    return this.authService.verifyEmail(dto);
+  async verifyEmail(
+    @Body() dto: VerifyEmailDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.verifyEmail(dto);
+
+    // Set httpOnly cookie for auto-login after verification
+    res.cookie('auth_token', result.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+    // set the header bearer token
+    res.setHeader('Authorization', `Bearer ${result.token}`);
+
+    return result;
   }
 
   @Post('resend-verification')
@@ -59,5 +96,17 @@ export class AuthController {
   @Post('reset-password')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
+  }
+
+  @Post('onboarding')
+  @UseGuards(JwtAuthGuard)
+  async onboarding(@CurrentUser() user: any, @Body() dto: OnboardingDto) {
+    return await this.authService.onboarding(user.id as string, dto);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  me(@CurrentUser() user: Prisma.UserGetPayload<{ include: { auth: true } }>) {
+    return user;
   }
 }

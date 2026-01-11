@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { User, Auth } from 'generated/prisma/client';
+import { Auth, User } from 'generated/prisma/client';
 
 export const createTestUser = (overrides?: Partial<User>): User => {
   return {
@@ -7,6 +7,8 @@ export const createTestUser = (overrides?: Partial<User>): User => {
     email: 'test@example.com',
     name: 'Test User',
     createdAt: new Date(),
+    username: null,
+    hasOnboarded: false,
     updatedAt: new Date(),
     ...overrides,
   };
