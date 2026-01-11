@@ -22,6 +22,7 @@ import { SignUpDto } from './dto/sign-up.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TransformResponseInterceptor } from './interceptors/transform-response.interceptor';
+import { setAuthToken } from './utils/set-auth-token.util';
 
 @Controller('auth')
 @UseInterceptors(TransformResponseInterceptor)
@@ -42,15 +43,7 @@ export class AuthController {
   ) {
     const result = await this.authService.signIn(dto);
 
-    // Set httpOnly cookie for defense in depth
-    res.cookie('auth_token', result.token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    });
-    // set the header bearer token
-    res.setHeader('Authorization', `Bearer ${result.token}`);
+    setAuthToken(res, result.token);
 
     return result;
   }
@@ -68,15 +61,7 @@ export class AuthController {
   ) {
     const result = await this.authService.verifyEmail(dto);
 
-    // Set httpOnly cookie for auto-login after verification
-    res.cookie('auth_token', result.token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-    });
-    // set the header bearer token
-    res.setHeader('Authorization', `Bearer ${result.token}`);
+    setAuthToken(res, result.token);
 
     return result;
   }
